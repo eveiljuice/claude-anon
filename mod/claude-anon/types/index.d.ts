@@ -4,6 +4,7 @@ declare module 'claude-code' {
       anonOn: boolean
       launcherMode: boolean
       restoredTitle: string | null
+      notice: string | null
     }
   }
 }

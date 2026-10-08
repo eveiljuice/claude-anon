@@ -72,7 +72,7 @@ describe('band (AbovePrompt)', () => {
     expect(rows).toEqual([])
   })
 
-  test('mid-session честен: bandNote(false) — «контекст уже загружен»', { timeoutMs: 15000 }, async ($, on) => {
+  test('mid-session честен: bandNote(false) — «context loaded before going anon»', { timeoutMs: 15000 }, async ($, on) => {
     armEngineOps(on)
     armNativeRender(on)
     const ui = await $.ui.mount({
@@ -84,8 +84,45 @@ describe('band (AbovePrompt)', () => {
 
     await $.command.run(RUN('on'))
     await ui.redraw()
-    const rows = await ui.findAll({ type: 'Text', text: 'контекст уже загружен' })
+    const rows = await ui.findAll({ type: 'Text', text: 'context loaded before going anon' })
     expect(rows.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('заметка под полем ввода (PromptHint.tail)', () => {
+  test('заметка дописывается к нативному хинту при toggle on', { timeoutMs: 15000 }, async ($, on) => {
+    armEngineOps(on)
+    armNativeRender(on)
+    const ui = await $.ui.mount({
+      plugin: 'anon-mode',
+      surface: 'terminal',
+      component: 'PromptHint',
+      props: { isDraft: false, isWorking: false, hint: '? for shortcuts' },
+    })
+
+    await $.command.run(RUN('on'))
+    await ui.redraw()
+
+    const notice = await ui.findAll({ type: 'Text', text: 'session will not be saved' })
+    expect(notice.length).toBeGreaterThanOrEqual(1)
+    const native = await ui.findAll({ type: 'Text', text: 'for shortcuts' })
+    expect(native.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('без заметки нативный хинт не тронут, тосты-в-угол не спавнятся', { timeoutMs: 15000 }, async ($, on) => {
+    const armed = armEngineOps(on)
+    armNativeRender(on)
+    const ui = await $.ui.mount({
+      plugin: 'anon-mode',
+      surface: 'terminal',
+      component: 'PromptHint',
+      props: { isDraft: false, isWorking: false, hint: '? for shortcuts' },
+    })
+
+    await ui.redraw()
+    const rows = await ui.findAll({ type: 'Text', text: 'claude anon on' })
+    expect(rows).toEqual([])
+    expect(armed.toasts).toEqual([]) // тосты больше не используются
   })
 })
 

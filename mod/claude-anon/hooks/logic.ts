@@ -9,7 +9,7 @@ export type AnonDecision = {
 
 export const ANON_POLICY_ID = 'anon-mode:policy'
 
-export const BAND_SUFFIX = 'память не пишется'
+export const BAND_SUFFIX = 'memory writes blocked'
 
 export function decideAnon(arg: string, current: boolean, launcher: boolean): AnonDecision {
   const spoken = arg.trim().toLowerCase()
@@ -18,7 +18,7 @@ export function decideAnon(arg: string, current: boolean, launcher: boolean): An
     return {
       want: false,
       refuse: true,
-      refuseText: 'claude anon: в этом профиле инкогнито всегда',
+      refuseText: 'claude anon: this profile is always incognito',
     }
   }
   if (spoken === 'on') {
@@ -31,7 +31,7 @@ export function decideAnon(arg: string, current: boolean, launcher: boolean): An
 }
 
 export function bandNote(launcher: boolean): string {
-  return launcher ? 'сессия не сохранится' : 'контекст уже загружен'
+  return launcher ? 'session not saved' : 'context loaded before going anon'
 }
 
 export function appendPolicy(

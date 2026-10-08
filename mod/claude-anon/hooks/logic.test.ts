@@ -22,7 +22,7 @@ describe('decideAnon', () => {
   test('launcher отказывает off, когда режим включён', () => {
     const d = decideAnon('off', true, true)
     expect(d.refuse).toBe(true)
-    expect(d.refuseText).toContain('инкогнито всегда')
+    expect(d.refuseText).toContain('always incognito')
   })
 
   test('launcher безвреден для on', () => {
@@ -38,11 +38,11 @@ describe('decideAnon', () => {
 
 describe('bandNote', () => {
   test('launcher-режим честно обещает несохранение', () => {
-    expect(bandNote(true)).toBe('сессия не сохранится')
+    expect(bandNote(true)).toBe('session not saved')
   })
 
   test('mid-session-режим предупреждает о уже загруженном контексте', () => {
-    expect(bandNote(false)).toBe('контекст уже загружен')
+    expect(bandNote(false)).toBe('context loaded before going anon')
   })
 })
 

@@ -15,7 +15,7 @@ describe('/anon toggle', () => {
     const answer = await $.command.run(RUN(''))
 
     expect(answer.text).toContain('on')
-    expect(armed.toasts.join(' ')).toContain('on')
+    expect(armed.state.get('anon-mode/notice')).toBe('claude anon on — session will not be saved')
 
     const manifest = armed.store.get('anon-manifest') as AnonManifest
     const ids = Object.keys(manifest)

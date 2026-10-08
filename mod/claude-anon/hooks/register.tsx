@@ -15,11 +15,12 @@ const MANIFEST_KEY = 'anon-manifest'
 const FLAG_KEY = 'anon-continue'
 
 const ANON_POLICY_TEXT =
-  'claude anon включён: не пиши в память (MEMORY.md и файлы автопамяти), ' +
-  'не ссылайся на память пользователя, CLAUDE.md или историю подсказок — ' +
-  'они в этой сессии не загружались — и не персонализируй ответы.'
+  'claude anon mode is on: do not write to memory (MEMORY.md and auto-memory files), ' +
+  "do not reference the user's memory, CLAUDE.md or prompt history — " +
+  'they were not loaded in this session — and do not personalize answers.'
 
-const ANON_DENY_MESSAGE = 'claude anon: запись под каталогом проектных сессий заблокирована'
+const ANON_DENY_MESSAGE =
+  "claude anon: writes under the engine's projects directory are blocked"
 
 export type ManifestRecord = { transcriptPath: string; sessionDir: string }
 export type AnonManifest = Record<string, ManifestRecord>
@@ -35,6 +36,25 @@ const ANON_MASKOT = '#9b6bff'
 const MASKOT = '◉‿◉'
 
 const restoredTitle = atom({ plugin: 'anon-mode', key: 'restoredTitle' } as const, null)
+const notice = atom({ plugin: 'anon-mode', key: 'notice' } as const, null)
+
+const NOTICE_MS = 4000
+
+/** Заметка о переключении: рисуется под полем ввода (PromptHint.tail),
+ * не тостом в правом верхнем углу. Гаснет через NOTICE_MS. Сет ОБЯЗАН
+ * await-нуться внутри хендлера (host-правило: state.set вне диспетча
+ * отказано); гашение — колбеком таймера, живущим в среде плагина.
+ * В тест-движке часов нет — catch осталяет заметку до следующего события. */
+async function showNotice($: EngineSubset, text: string): Promise<void> {
+  await update($, notice, () => text)
+
+  try {
+    const wait: Promise<void> = $.clock.after(NOTICE_MS, () => update($, notice, () => null))
+    wait.catch(() => undefined)
+  } catch {
+    /* часов нет (тест-движок): заметка остаётся до следующего события */
+  }
+}
 
 // Структурный поднабор $, которого достаточно хелперам: полный Engine
 // структурно совместим с ним, типы не зависят от выписанных движком d.ts.
@@ -57,6 +77,9 @@ type EngineSubset = {
   }
   process: {
     run: (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+  }
+  clock: {
+    after: (ms: number, fn: () => unknown) => Promise<void>
   }
 }
 
@@ -218,7 +241,7 @@ export const register: Register = on => {
     await $.command
       .register({
         name: 'anon',
-        description: 'claude anon — анонимный режим (сессия не сохраняется, память не пишется)',
+        description: 'claude anon — incognito mode (session is not saved, memory is not written)',
         argumentHint: '[on|off]',
       })
       .catch(() => undefined) // повторный session.start (resume, тесты) не валит хук
@@ -264,8 +287,8 @@ export const register: Register = on => {
     const decision = decideAnon(e.args, current, launcher)
 
     if (decision.refuse) {
-      $.ui.toast(decision.refuseText)
-      return { text: 'claude anon остаётся включённым — профиль запущен лаунчером anon.' }
+      await showNotice($, decision.refuseText)
+      return { text: 'claude anon stays on — this profile was launched by the anon launcher.' }
     }
 
     // Sticky: запись ставится один раз при первом включении и не снимается
@@ -285,8 +308,8 @@ export const register: Register = on => {
           /* заголовок — не критично */
         }
       }
-      $.ui.toast('claude anon on — сессия не сохранится')
-      return { text: 'claude anon on — сессия не сохранится, память не пишется.' }
+      await showNotice($, 'claude anon on — session will not be saved')
+      return { text: 'claude anon on — the session will not be saved, memory writes are blocked.' }
     }
 
     if (!launcher) {
@@ -295,10 +318,11 @@ export const register: Register = on => {
       // эта беседа — новая сессия, /anon в ней не включали.
       await $.store.delete(FLAG_KEY)
     }
-    $.ui.toast('claude anon off — эта беседа всё равно не сохранится')
+    await showNotice($, 'claude anon off — this conversation stays unsaved')
     return {
-      text: 'claude anon off. Полосу, лейбл и блокировки на будущее снял; ' +
-        'запись этой беседы в манифест осталась — при выходе она удалится.',
+      text: 'claude anon off. Removed the band, the footer label and the blocks ' +
+        'for future turns; this conversation stays unsaved — its transcript ' +
+        'is deleted at exit.',
     }
   })
 
@@ -368,6 +392,16 @@ export const register: Register = on => {
   }).catch(($, e, next) =>
     next.called ? next(e) : { deny: `${ANON_DENY_MESSAGE} (guard упал)` },
   )
+
+  // Заметка о переключении — в конец нативной строки-хинта ПОД полем ввода
+  // (tail рисуется движком после нативной строки, пилюли остаются живыми).
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const text = await read($, notice)
+    if (text === null) {
+      return next(e)
+    }
+    return next({ ...e, props: { ...e.props, tail: `· ${text}` } })
+  })
 
   // Политика режима в системный промпт — одной секцией в конец, идемпотентно.
   on('prompt.compose', async ($, e, next) => {

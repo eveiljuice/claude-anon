@@ -208,17 +208,22 @@ export function armLifecycle(on: On, sessionId = TEST_SESSION_ID): void {
  * иначе mount бросает «no implementation for ui.render». */
 export function armNativeRender(
   on: On,
-  components: readonly string[] = ['AbovePrompt', 'SessionMode'],
+  components: readonly string[] = ['AbovePrompt', 'SessionMode', 'PromptHint'],
 ): void {
   for (const component of components) {
     on('ui.render', { component } as { component: typeof component }, ($, e, next) => {
       const { Text } = $.ui.resolve(e)
-      const props = e.props as { modes?: readonly string[] }
-      const shown =
-        e.component === 'SessionMode' && props.modes !== undefined
-          ? props.modes.join(' & ') // движок рисует режимы «joined by & »
-          : `native/${component}`
-      return <Text>{shown}</Text>
+      const props = e.props as { modes?: readonly string[]; hint?: string; tail?: string }
+      // Движок рисует режимы «joined by & »
+      if (e.component === 'SessionMode' && props.modes !== undefined) {
+        return <Text>{props.modes.join(' & ')}</Text>
+      }
+      // tail рисуется после нативной строки (контракт PromptHint)
+      if (e.component === 'PromptHint') {
+        const tail = props.tail !== undefined ? `  ${props.tail}` : ''
+        return <Text>{`${props.hint ?? ''}${tail}`}</Text>
+      }
+      return <Text>{`native/${component}`}</Text>
     })
   }
 }
