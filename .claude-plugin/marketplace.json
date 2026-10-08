@@ -1,11 +1,15 @@
 {
   "name": "claude-anon",
-  "owner": { "name": "Timo Elsesser" },
+  "owner": {
+    "name": "Timo Elsesser",
+    "url": "https://github.com/eveiljuice"
+  },
   "plugins": [
     {
       "name": "anon-mode",
       "source": "./mod/claude-anon",
-      "description": "claude anon — инкогнито-режим для Claude Code: сессия не сохраняется, память не пишется, клиент красится в фиолетовый"
+      "description": "Incognito mode for Claude Code: session not saved, memory not written, one-command toggle",
+      "category": "utility"
     }
   ]
 }
