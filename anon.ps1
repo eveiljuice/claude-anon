@@ -58,7 +58,7 @@ if (Test-Path -LiteralPath $settingsPath) {
     try { $settings = Get-Content -Raw -Encoding UTF8 -LiteralPath $settingsPath | ConvertFrom-Json } catch { $settings = $null }
 }
 if ($null -eq $settings -or $settings -isnot [System.Management.Automation.PSCustomObject]) {
-    $settings = New-Object System.Management.Automation.PSCustomObject
+    $settings = [pscustomobject]@{}
 }
 $settings | Add-Member -NotePropertyName cleanupPeriodDays -NotePropertyValue 0 -Force
 $settings | Add-Member -NotePropertyName autoMemoryEnabled -NotePropertyValue $false -Force
