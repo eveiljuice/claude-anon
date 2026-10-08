@@ -21,6 +21,9 @@ export type ArmOptions = {
   cwd?: string
   /** Все process.run в этом тесте отвечают этим exitCode (для тестов ретрая). */
   processExitCode?: number
+  /** Сеять 'anon-confirm-seen' (баннер согласия обойдён). По умолчанию true:
+   * баннер — тема confirm-тестов, там передают consent: false. */
+  consent?: boolean
 }
 
 /** Дефолтный armированный session.id: в теле теста op недоступны, id берут отсюда. */
@@ -48,6 +51,11 @@ export function armEngineOps(on: On, options: ArmOptions = {}): Armed {
   on('env.get', ($, e) => ({ value: env[e.name] }))
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: cwd }))
+
+  // $.ui.ask — вызов ядра (не событие): армировать нельзя, «ui.ask» не событие.
+  // Тест-движок сам отклонит вызов («no implementation»); тесты согласия
+  // об этом знают: decline-кейсы ловят отклонение, accept-кейсы ходят без
+  // диалога через see-флаг или засеянный 'anon-confirm-seen'.
 
   on('store.get', ($, e) => ({ value: armed.store.get(e.key) }))
   on('store.set', ($, e) => {
@@ -82,6 +90,14 @@ export function armEngineOps(on: On, options: ArmOptions = {}): Armed {
   on('command.register', ($, e) => ({ value: { command: e.name } }))
 
   // --- in-memory fs ---
+  on('fs.read', ($, e) => {
+    const path = typeof e === 'string' ? e : (e as { path?: string }).path ?? ''
+    const held = armed.fsFiles.get(path)
+    if (held === undefined) {
+      return { deny: 'ENOENT (test fs)' }
+    }
+    return { value: held }
+  })
   on('fs.write', ($, e) => {
     armed.fsFiles.set(e.path, e.text)
     const cut = Math.max(e.path.lastIndexOf('/'), e.path.lastIndexOf('\\'))
@@ -158,14 +174,39 @@ export function armEngineOps(on: On, options: ArmOptions = {}): Armed {
     return { value: { exitCode: options.processExitCode ?? 0, stdout: '', stderr: '' } }
   })
 
+  if (options.consent ?? true) {
+    armed.store.set('anon-confirm-seen', true)
+  }
+
   return armed
 }
 
 /** Нижний фейк-промпт-композиция: в тест-движке у host нет собственной
- * композиции — тест отвечает пустыми секциями. prompt.compose — engine-событие:
- * ответ напрямую `{ sections }`, не через `{ value }` (это форма op). */
-export function armPromptCompose(on: On): void {
-  on('prompt.compose', () => ({ sections: [] }))
+ * композиции — тест отвечает своими секциями или пустыми. prompt.compose —
+ * engine-событие: ответ напрямую `{ sections }`, не через `{ value }` (это op). */
+export function armPromptCompose(
+  on: On,
+  sections: readonly { id: string; text: string; scope: 'shared' | 'session' }[] = [],
+): void {
+  on('prompt.compose', () => ({ sections: [...sections] }))
+}
+
+/** Нижний фейк контекстных блоков первого хода: для prompt.context ядро —
+ * сам вход (движок композирует до хуков), фейк отвечает эхом входа. */
+export function armPromptContext(on: On): void {
+  on('prompt.context', ($, e) => {
+    const input = e as { blocks?: unknown[]; instructionFiles?: unknown[] }
+    return {
+      blocks: [...(input.blocks ?? [])],
+      instructionFiles: [...(input.instructionFiles ?? [])],
+    }
+  })
+}
+
+/** Нижний фейк вложений: каждое — нативный текст-заглушка. Возврат `{ text }`,
+ * `{ text: null }` из хука означает «вложение не уходит». */
+export function armPromptAttachment(on: On): void {
+  on('prompt.attachment', () => ({ text: 'native attachment' }))
 }
 
 /** Нижний фейк-раннер тула: в тест-движке core не исполняет инструменты,

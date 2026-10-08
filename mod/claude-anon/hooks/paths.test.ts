@@ -1,6 +1,16 @@
 import { describe, test, expect } from 'claude-code/testing'
 
-import { configDir, djb2Hash, isUnder, projectsDir, sanitizePath, sessionFilePaths } from './paths'
+import {
+  configDir,
+  djb2Hash,
+  fileHistoryDir,
+  historyPath,
+  isUnder,
+  projectsDir,
+  sanitizePath,
+  sessionFilePaths,
+  todosDir,
+} from './paths'
 
 describe('sanitizePath', () => {
   test('заменяет неалфанумерные знаки на дефисы', () => {
@@ -27,6 +37,15 @@ test('configDir уважает CLAUDE_CONFIG_DIR, иначе <home>\\.claude', (
 
 test('projectsDir добавляет \\projects', () => {
   expect(projectsDir('C:\\cfg')).toBe('C:\\cfg\\projects')
+})
+
+test('historyPath — history.jsonl под корнем профиля', () => {
+  expect(historyPath('C:\\cfg')).toBe('C:\\cfg\\history.jsonl')
+})
+
+test('todosDir и fileHistoryDir — подкорневые каталоги', () => {
+  expect(todosDir('C:\\cfg')).toBe('C:\\cfg\\todos')
+  expect(fileHistoryDir('C:\\cfg')).toBe('C:\\cfg\\file-history')
 })
 
 test('sessionFilePaths даёт транскрипт и каталог сессии', () => {

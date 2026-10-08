@@ -1,7 +1,7 @@
 {
   "name": "anon-mode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Timo Elsesser" },
-  "description": "claude anon — инкогнито-режим: сессия не сохраняется, память не пишется, клиент красится в фиолетовый",
+  "description": "claude anon — incognito mode: clean context (memory, CLAUDE.md, history unloaded), session not saved, transcript deleted at exit",
   "types": "./types/index.d.ts"
 }

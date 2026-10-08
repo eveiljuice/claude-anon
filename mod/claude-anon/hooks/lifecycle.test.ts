@@ -1,6 +1,7 @@
 import { test, expect } from 'claude-code/testing'
 import type { AnonManifest, ManifestRecord } from './register'
 import { TEST_SESSION_ID, armEngineOps, armLifecycle, type Armed } from './test-support'
+import { fileHistoryDir, historyPath, todosDir } from './paths'
 
 const RUN = (args: string) => ({
   command: 'anon',
@@ -208,3 +209,74 @@ test('запись с путём вне projects не удаляется и ос
   expect(armed.argvs.some(argv => argv.includes(evil))).toBe(false)
   expect(armed.store.get('anon-manifest') as AnonManifest).toEqual({ [id]: evilRec })
 })
+
+// --- побочные файлы профиля: history.jsonl, todos, file-history ---
+
+const CFG = 'C:\\Users\\ok\\.claude'
+
+test('session.end чистит history.jsonl по sessionId и не трогает чужие строки', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  await makeSacrifice(armed, id) // запись манифеста — триггер чистки
+  const hist = historyPath(CFG)
+  armed.fsFiles.set(hist, [
+    `{"display":"anon question","sessionId":"${id}"}`,
+    '{"display":"other question","sessionId":"other-session-1"}',
+    `{"display":"anon second","sessionId":"${id}"}`,
+  ].join('\n') + '\n')
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  const after = armed.fsFiles.get(hist) ?? ''
+  expect(after).not.toContain(id) // свои строки сняты
+  expect(after).toContain('"sessionId":"other-session-1"') // чужие живы
+})
+
+test('session.end удаляет todos-файлы и каталог file-history сессии', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  await makeSacrifice(armed, id) // запись манифеста — триггер чистки
+  const todo = `${todosDir(CFG)}\\${id}-agent-3f.json`
+  const fhDir = `${fileHistoryDir(CFG)}\\${id}`
+  armed.fsFiles.set(todo, '{"todos":[]}')
+  armed.fsDirs.add(fhDir)
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  expect(armed.argvs).toContainEqual(['cmd', '/c', 'del', '/q', '/f', todo])
+  expect(armed.argvs).toContainEqual(['cmd', '/c', 'rd', '/s', '/q', fhDir])
+  expect(await armedExists(armed, todo)).toBe(false)
+  expect(await armedExists(armed, fhDir)).toBe(false)
+})
+
+test('отсутствие побочных файлов — не ошибка (чистая запись снимается)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  await makeSacrifice(armed, id)
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  const manifest = armed.store.get('anon-manifest') as AnonManifest
+  expect(Object.keys(manifest)).not.toContain(id)
+})
+
+test('history.jsonl, где своих строк уже нет, не переписывается зря', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  const hist = historyPath(CFG)
+  const before = '{"display":"other","sessionId":"other-2"}\n'
+  armed.fsFiles.set(hist, before)
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  expect(armed.fsFiles.get(hist)).toBe(before) // байты не менялись
+})
+
+/** exists по фейковой fs (нет прямой read-проверки для каталогов). */
+async function armedExists(armed: Armed, path: string): Promise<boolean> {
+  return armed.fsFiles.has(path) || armed.fsDirs.has(path)
+}

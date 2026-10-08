@@ -5,6 +5,8 @@ declare module 'claude-code' {
       launcherMode: boolean
       restoredTitle: string | null
       notice: string | null
+      /** Контекст первого хода вырезан после включения → band «memory unloaded». */
+      contextUnloaded: boolean | null
     }
   }
 }

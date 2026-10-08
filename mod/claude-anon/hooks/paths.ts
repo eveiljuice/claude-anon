@@ -38,6 +38,20 @@ export function projectsDir(configRoot: string): string {
   return `${configRoot}\\projects`
 }
 
+// --- побочные файлы профиля, несущие следы сессий (чистка при session.end) ---
+
+export function historyPath(configRoot: string): string {
+  return `${configRoot}\\history.jsonl`
+}
+
+export function todosDir(configRoot: string): string {
+  return `${configRoot}\\todos`
+}
+
+export function fileHistoryDir(configRoot: string): string {
+  return `${configRoot}\\file-history`
+}
+
 export function sessionFilePaths(
   configRoot: string,
   sessionId: string,
