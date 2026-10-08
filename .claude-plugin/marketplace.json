@@ -1,0 +1,11 @@
+{
+  "name": "claude-anon",
+  "owner": { "name": "Timo Elsesser" },
+  "plugins": [
+    {
+      "name": "anon-mode",
+      "source": "./mod/claude-anon",
+      "description": "claude anon — инкогнито-режим для Claude Code: сессия не сохраняется, память не пишется, клиент красится в фиолетовый"
+    }
+  ]
+}
