@@ -52,7 +52,10 @@ export function sessionFilePaths(
 }
 
 export function isUnder(path: string, dir: string): boolean {
-  const withSep = dir.endsWith('\\') || dir.endsWith('/') ? dir : `${dir}\\`
+  // Windows сравнивает пути без учёта регистра — гвардия обязана совпадать.
+  const lowered = path.toLowerCase()
+  const withSepRaw = dir.endsWith('\\') || dir.endsWith('/') ? dir : `${dir}\\`
+  const withSep = withSepRaw.toLowerCase()
   // Каталог сам по себе (равно или с завершающим разделителем) — не «внутри».
-  return path.startsWith(withSep) && path !== dir && path !== withSep
+  return lowered.startsWith(withSep) && lowered !== withSep && lowered !== withSep.slice(0, -1)
 }

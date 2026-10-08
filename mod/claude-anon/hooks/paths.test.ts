@@ -40,3 +40,8 @@ test('isUnder проверяет границу каталога, а не сов
   expect(isUnder('C:\\cfg\\projects-x\\file.jsonl', 'C:\\cfg\\projects')).toBe(false)
   expect(isUnder('C:\\cfg\\projects\\', 'C:\\cfg\\projects')).toBe(false)
 })
+
+test('isUnder не зависит от регистра (Windows)', () => {
+  expect(isUnder('c:\\cfg\\projects\\x\\sid.jsonl', 'C:\\CFG\\projects')).toBe(true)
+  expect(isUnder('C:\\cfg\\PROJECTS-x\\file.jsonl', 'C:\\cfg\\projects')).toBe(false)
+})

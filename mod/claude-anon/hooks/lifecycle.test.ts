@@ -10,15 +10,15 @@ const RUN = (args: string) => ({
 })
 
 // Готовит «жертву» в фейковом fs: transcript-файл + каталог сессии, запись в манифест.
-// В теле теста доступен только raisable-поднабор $; op (fs, store) — через армед-фейки.
+// Жертва живёт ПОД каталогом projects — контейнмент удаляет только из него.
 async function makeSacrifice(
   armed: Armed,
   sessionId: string,
 ): Promise<{ transcriptPath: string; sessionDir: string }> {
-  const tmpRoot = 'C:\\Users\\ok\\AppData\\Local\\Temp'
-  const base = `claude-anon-lc-${sessionId}`
-  const transcriptPath = `${tmpRoot}\\${base}.jsonl`
-  const sessionDir = `${tmpRoot}\\${base}`
+  const root = 'C:\\Users\\ok\\.claude\\projects\\C--Users-ok-tmp-anon-mode-test'
+  const base = `${root}\\claude-anon-lc-${sessionId}`
+  const transcriptPath = `${base}.jsonl`
+  const sessionDir = `${base}`
 
   armed.fsFiles.set(transcriptPath, '{"type":"user"}') // фейк-фс: файл
   armed.fsDirs.add(sessionDir) // фейк-фс: каталог сессии (как у движка)
@@ -96,4 +96,115 @@ test('текущая сессия при сёрче не тронута', { time
   const after = armed.store.get('anon-manifest') as AnonManifest
   expect(Object.keys(after)).toContain(currentId)
   expect(after[currentId].transcriptPath).toBe(before[currentId].transcriptPath)
+})
+
+// --- финальное ревью: C1, I1, I2, M3 ---
+
+/** Транскрипт, который recordOwnSession посчитает для TEST_SESSION_ID (ARM cwd/config). */
+const EXPECTED_OWN_TRANSCRIPT = (): string =>
+  'C:\\Users\\ok\\.claude\\projects\\C--Users-ok-tmp-anon-mode-test\\' + `${TEST_SESSION_ID}.jsonl`
+
+/** Каталог сессии, который recordOwnSession посчитает для TEST_SESSION_ID. */
+const EXPECTED_OWN_SESSION_DIR = (): string =>
+  'C:\\Users\\ok\\.claude\\projects\\C--Users-ok-tmp-anon-mode-test\\' + TEST_SESSION_ID
+
+test('/clear ставит флаг продолжения и снимает запись старого id (C1)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const oldId = TEST_SESSION_ID
+  await $.command.run(RUN('on'))
+  armed.argvs.length = 0
+
+  await $.session.end({ reason: 'clear', sessionId: oldId, resume: { id: oldId } })
+
+  expect(armed.store.get('anon-continue')).toBe(true)
+  const manifest = armed.store.get('anon-manifest') as AnonManifest
+  expect(Object.keys(manifest)).not.toContain(oldId)
+})
+
+test('session.end после /clear записывает и удаляет свой транскрипт, флаг снят (C1)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  await $.command.run(RUN('on'))
+  await $.session.end({ reason: 'clear', sessionId: id, resume: { id } }) // флаг продолжения
+  armed.argvs.length = 0
+  armed.store.delete('anon-manifest') // пост-клировский манифест — без записей
+  armed.store.set('anon-continue', true) // state мог быть сброшен; флаг управляет
+  // пост-клировская беседа успела поработать: её транскрипт существует
+  armed.fsFiles.set(EXPECTED_OWN_TRANSCRIPT(), '{"type":"user"}')
+  armed.fsDirs.add(EXPECTED_OWN_SESSION_DIR())
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  expect(armed.argvs).toContainEqual(['cmd', '/c', 'del', '/q', '/f', EXPECTED_OWN_TRANSCRIPT()])
+  expect(armed.store.get('anon-continue')).toBeUndefined()
+  const manifest = armed.store.get('anon-manifest') as AnonManifest
+  expect(Object.keys(manifest)).not.toContain(id)
+})
+
+test('/anon off после /clear отменяет отложенное удаление (C1)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  await $.command.run(RUN('on'))
+  await $.session.end({ reason: 'clear', sessionId: id, resume: { id } }) // флаг
+  await $.command.run(RUN('off')) // явное выключение в пост-клире отменяет
+  expect(armed.store.get('anon-continue')).toBeUndefined()
+
+  armed.argvs.length = 0
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+  expect(armed.argvs.some(argv => argv[0] === 'cmd')).toBe(false)
+})
+
+test('session.start перевооружает анон для записи своего id (resume, M3)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  armed.store.set('anon-manifest', {
+    [TEST_SESSION_ID]: { transcriptPath: 'C:\\x.jsonl', sessionDir: 'C:\\x' },
+  })
+
+  await $.session.start({ cwd: 'C:\\Users\\ok', surface: 'terminal', isInteractive: true })
+
+  expect(armed.state.get('anon-mode/anonOn')).toBe(true)
+})
+
+test('session.start глотает флаг продолжения, не перевооружая (свежий процесс, C1)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  armed.store.set('anon-continue', true)
+
+  await $.session.start({ cwd: 'C:\\Users\\ok', surface: 'terminal', isInteractive: true })
+
+  expect(armed.state.get('anon-mode/anonOn')).toBeUndefined()
+  expect(armed.store.get('anon-continue')).toBeUndefined()
+})
+
+test('неудача удаления (exitCode 1) оставляет запись в манифесте (I1)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on, { processExitCode: 1 })
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  const sacrifice = await makeSacrifice(armed, id)
+  armed.argvs.length = 0
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  expect(armed.argvs).toContainEqual(['cmd', '/c', 'del', '/q', '/f', sacrifice.transcriptPath])
+  const manifest = armed.store.get('anon-manifest') as AnonManifest
+  expect(manifest[id]).toBeDefined() // запись осталась — ретрай на следующем старте
+})
+
+test('запись с путём вне projects не удаляется и остаётся (контейнмент, I2)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armLifecycle(on)
+  const id = TEST_SESSION_ID
+  const evil = 'C:\\Users\\ok\\Desktop\\victim.jsonl'
+  armed.fsFiles.set(evil, 'victim content')
+  const evilRec = { transcriptPath: evil, sessionDir: 'C:\\Users\\ok\\Desktop\\victim-dir' }
+  armed.store.set('anon-manifest', { [id]: evilRec })
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: id, resume: { id } })
+
+  expect(armed.argvs.some(argv => argv.includes(evil))).toBe(false)
+  expect(armed.store.get('anon-manifest') as AnonManifest).toEqual({ [id]: evilRec })
 })

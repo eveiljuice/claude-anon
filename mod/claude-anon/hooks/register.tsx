@@ -9,6 +9,11 @@ import { ANON_TITLE, readTitleArgv, restoreTitleArgv, setTitleArgv } from './tit
 
 const MANIFEST_KEY = 'anon-manifest'
 
+/** Флаг «процесс продолжается анонимно после /clear»: ставится clear-ветвью
+ * session.end, снимается следующим session.end (тогда транскрипт
+ * пост-клировской беседы записывается и удаляется) или /anon off. */
+const FLAG_KEY = 'anon-continue'
+
 const ANON_POLICY_TEXT =
   'claude anon включён: не пиши в память (MEMORY.md и файлы автопамяти), ' +
   'не ссылайся на память пользователя, CLAUDE.md или историю подсказок — ' +
@@ -48,6 +53,7 @@ type EngineSubset = {
   store: {
     get: (key: string) => Promise<unknown>
     set: (key: string, value: unknown) => Promise<void>
+    delete: (key: string) => Promise<void>
   }
   process: {
     run: (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
@@ -71,30 +77,50 @@ async function readManifest($: EngineSubset): Promise<AnonManifest> {
   return held === undefined || held === null ? {} : (held as AnonManifest)
 }
 
-/** Удаляет файлы записи; отсутствующее на диске проходит тихо (best effort). */
-async function deleteQuietly($: EngineSubset, rec: ManifestRecord): Promise<void> {
+/** Удаляет файлы записи; отсутствующее на диске проходит тихо. Возвращает,
+ * удалилось (или ничего удалять не было): при неудаче запись остаётся на ретрай. */
+async function deleteQuietly($: EngineSubset, rec: ManifestRecord): Promise<boolean> {
+  const root = projectsDir(await configRoot($))
+  // Контейнмент (I2): чистим только под каталогом проектов движка —
+  // испорченная/чужая запись из $.store не имеет права указать за его пределы.
+  if (!isUnder(rec.transcriptPath, root) || !isUnder(rec.sessionDir, root)) {
+    return false
+  }
+
+  let ok = true
   if (await $.fs.exists(rec.transcriptPath)) {
-    await $.process.run(['cmd', '/c', 'del', '/q', '/f', rec.transcriptPath])
+    const { exitCode } = await $.process.run(['cmd', '/c', 'del', '/q', '/f', rec.transcriptPath])
+    if (exitCode !== 0 || (await $.fs.exists(rec.transcriptPath))) {
+      ok = false
+    }
   }
   if (await $.fs.exists(rec.sessionDir)) {
-    await $.process.run(['cmd', '/c', 'rd', '/s', '/q', rec.sessionDir])
+    const { exitCode } = await $.process.run(['cmd', '/c', 'rd', '/s', '/q', rec.sessionDir])
+    if (exitCode !== 0 || (await $.fs.exists(rec.sessionDir))) {
+      ok = false
+    }
   }
+  return ok
 }
 
-/** Удаляет файлы записи и снимает её. */
+/** Удаляет файлы записи и снимает её; на неудачу удаления запись остаётся. */
 async function dropManifestEntry($: EngineSubset, sessionId: string): Promise<void> {
   const manifest = await readManifest($)
   const rec = manifest[sessionId]
   if (rec === undefined) {
     return
   }
-  await deleteQuietly($, rec)
+  const ok = await deleteQuietly($, rec)
+  if (!ok) {
+    return // ретрай на следующем session.start (sweep)
+  }
   const next: AnonManifest = { ...manifest }
   delete next[sessionId]
   await $.store.set(MANIFEST_KEY, next)
 }
 
-/** Дочистка сирот после хард-килла: чужие записи удаляем, свою оставляем. */
+/** Дочистка сирот после хард-килла: чужие записи удаляем (неудачные — оставляем
+ * на следующий ретрай), свою оставляем. */
 async function sweepOrphans($: EngineSubset): Promise<void> {
   const manifest = await readManifest($)
   const current = await $.session.id()
@@ -105,8 +131,12 @@ async function sweepOrphans($: EngineSubset): Promise<void> {
       keep[id] = manifest[id]
       continue
     }
-    await deleteQuietly($, manifest[id])
-    changed = true
+    const ok = await deleteQuietly($, manifest[id])
+    if (ok) {
+      changed = true
+    } else {
+      keep[id] = manifest[id]
+    }
   }
   if (changed) {
     await $.store.set(MANIFEST_KEY, keep)
@@ -198,6 +228,20 @@ export const register: Register = on => {
     const isLauncher = (await $.env.get('CLAUDE_ANON')) === '1'
     await update($, launcherMode, () => isLauncher)
 
+    // Перевооружение (M3): у записанной в манифест сессии band/гвардия
+    // включаются снова — так ведёт себя resume пережившей хард-килл сессии.
+    const manifest = await readManifest($)
+    if (manifest[(await $.session.id())] !== undefined) {
+      await update($, anonOn, () => true)
+    }
+
+    // Флаг продолжения из СВОЕГО процесса снимает сам его session.end;
+    // доживший до нового процесса флаг (крэш после /clear) — только глотаем:
+    // той беседы вместе с state уже нет, перевооружать нечего.
+    if ((await $.store.get(FLAG_KEY)) === true) {
+      await $.store.delete(FLAG_KEY)
+    }
+
     if (isLauncher) {
       await update($, anonOn, () => true)
 
@@ -247,6 +291,9 @@ export const register: Register = on => {
 
     if (!launcher) {
       await restoreTitleNow($)
+      // Явный off в пост-клировской беседе отменяет её отложенное удаление:
+      // эта беседа — новая сессия, /anon в ней не включали.
+      await $.store.delete(FLAG_KEY)
     }
     $.ui.toast('claude anon off — эта беседа всё равно не сохранится')
     return {
@@ -344,17 +391,26 @@ export const register: Register = on => {
     const stillAnon = await read($, anonOn)
 
     if (e.reason === 'clear' && stillAnon) {
-      // /clear: беседа убита — её файл больше не нужен и должен быть удалён;
-      // процесс продолжается анонимно под новым id (session.start не придёт).
-      const newId = await $.session.id()
-      if (newId !== '' && newId !== e.sessionId && !(await read($, launcherMode))) {
-        await recordOwnSession($)
+      // /clear: старая беседа убита — файлы удаляются сейчас. Не полагаемся на
+      // тайминг id (на этапе end $.session.id() ещё может отвечать старым):
+      // вместо немедленной записи ставим флаг — пост-клировскую беседу запишет
+      // и удалит СВОЙ session.end. session.start на /clear не приходит.
+      if (!(await read($, launcherMode))) {
+        await $.store.set(FLAG_KEY, true)
+        // Belt (M3): state мог пережить /clear — band/гвардия обязаны остаться.
+        await update($, anonOn, () => true)
       }
       await dropManifestEntry($, e.sessionId)
 
       return next(e)
     }
 
+    if ((await $.store.get(FLAG_KEY)) === true) {
+      // Завершается пост-клировская беседа: id уже актуален — записываем и
+      // удаляем её транскрипт наравне с исходной.
+      await recordOwnSession($)
+      await $.store.delete(FLAG_KEY)
+    }
     await dropManifestEntry($, e.sessionId)
     await restoreTitleNow($)
 

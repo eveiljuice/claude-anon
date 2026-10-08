@@ -69,6 +69,23 @@ test('Write вне projects проходит при on', { timeoutMs: 15000 }, a
   expect(armed.argvs.filter(argv => argv[0] === 'cmd' && argv[2] !== 'title')).toEqual([])
 })
 
+test('гвардия не зависит от регистра корня и пути (I3)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on, {
+    env: { USERPROFILE: 'C:\\USERS\\OK', TEMP: 'C:\\USERS\\OK\\AppData\\Local\\Temp' },
+  })
+  armBottomTools(on)
+  // путь spelled нижним регистром, корень — верхним: сравнение обязано совпасть
+  armed.fsFiles.set('c:\\users\\ok\\.claude\\projects\\c--users-ok\\some-session.jsonl', '{}')
+  await $.command.run(RUN('on'))
+
+  const result = await $.tool.call({
+    tool: 'Write',
+    file_path: 'c:\\users\\ok\\.claude\\projects\\c--users-ok\\some-session.jsonl',
+    content: 'x',
+  })
+  expect(await DENIED(result)).toBe(true)
+})
+
 test('Edit под <CFG>/projects отказан при on и свободен при off', { timeoutMs: 15000 }, async ($, on) => {
   const armed = armEngineOps(on)
   armBottomTools(on)

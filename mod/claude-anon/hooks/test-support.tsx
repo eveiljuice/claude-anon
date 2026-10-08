@@ -19,6 +19,8 @@ export type ArmOptions = {
   env?: Record<string, string | undefined>
   sessionId?: string
   cwd?: string
+  /** Все process.run в этом тесте отвечают этим exitCode (для тестов ретрая). */
+  processExitCode?: number
 }
 
 /** Дефолтный armированный session.id: в теле теста op недоступны, id берут отсюда. */
@@ -134,10 +136,26 @@ export function armEngineOps(on: On, options: ArmOptions = {}): Armed {
     return { value: entries }
   })
 
-  // process.run: записывает argv, ничего не делает (реального запуска в тестах нет)
+  // process.run: записывает argv и имитирует эффект cmd del/rd над фейковым fs
+  // (нужен механике ретрая: проверка exists-after у deleteQuietly),
+  // реального запуска в тестах нет.
   on('process.run', ($, e) => {
-    armed.argvs.push([...e.argv])
-    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+    const argv = [...e.argv]
+    armed.argvs.push(argv)
+    if (argv[0] === 'cmd' && argv[1] === '/c' && argv[2] === 'del') {
+      armed.fsFiles.delete(argv[argv.length - 1])
+    }
+    if (argv[0] === 'cmd' && argv[1] === '/c' && argv[2] === 'rd') {
+      const dir = argv[argv.length - 1]
+      armed.fsDirs.delete(dir)
+      for (const key of [...armed.fsFiles.keys(), ...armed.fsDirs]) {
+        if (key.startsWith(dir + '\\')) {
+          armed.fsFiles.delete(key)
+          armed.fsDirs.delete(key)
+        }
+      }
+    }
+    return { value: { exitCode: options.processExitCode ?? 0, stdout: '', stderr: '' } }
   })
 
   return armed
