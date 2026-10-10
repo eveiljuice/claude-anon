@@ -35,16 +35,7 @@ off (sticky).
 `No (default)` / `Yes, I accept`. Согласие запоминается между сессиями, диалог
 больше не повторяется; Esc — отклонение, ничего не включается.
 
-## Внешне
-
-- фиолетовая полоса над полем ввода с маскотом;
-- фиолетовый лейбл `· claude anon` в футере рядом с нативными режимами;
-- заголовок окна/вкладки терминала `Claude Code Anon`, пока режим активен.
-
 ## Установка
-
-Из GitHub — репозиторий сам является marketplace (обновления потом
-подтягиваются через `claude plugin marketplace update claude-anon`):
 
 ```bash
 claude plugin marketplace add eveiljuice/claude-anon
