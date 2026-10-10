@@ -2,6 +2,7 @@
   "name": "anon-mode",
   "version": "0.3.0",
   "author": { "name": "Timo Elsesser" },
+  "license": "MIT",
   "description": "claude anon — incognito mode: clean context (memory, CLAUDE.md, history unloaded), session not saved, transcript deleted at exit",
   "types": "./types/index.d.ts"
 }
