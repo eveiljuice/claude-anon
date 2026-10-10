@@ -7,12 +7,18 @@ import {
   BAND_SUFFIX,
   MEMORY_ATTACHMENT_TYPES,
   acceptedAnswer,
+  acceptedClear,
+  anonOnText,
   appendPolicy,
   bandNote,
+  clearOptions,
+  clearQuestion,
   confirmOptions,
   confirmQuestion,
   decideAnon,
   dropContextBlocks,
+  hasPersonalBlocks,
+  shouldOfferClear,
   stripMemorySections,
 } from './logic'
 import {
@@ -55,6 +61,9 @@ const contextUnloaded = atom(
   { plugin: 'anon-mode', key: 'contextUnloaded' } as const,
   null as boolean | null,
 )
+/** Контекст этой беседы хоть раз композован без фильтра (личное зашло в
+ * историю); снимается только /clear — новая беседа композуется заново. */
+const contextTainted = atom({ plugin: 'anon-mode', key: 'contextTainted' } as const, false)
 
 // --- палитра (спека §3.2) ---
 const ANON_BG = '#4b2e83'
@@ -114,6 +123,10 @@ type EngineSubset = {
   }
   ui: {
     ask: (question: string, options?: readonly string[]) => Promise<string>
+    invalidate: (event: 'prompt.context') => void
+  }
+  command: {
+    run: (input: { command: string }) => Promise<unknown>
   }
 }
 
@@ -374,6 +387,41 @@ async function insideProjects(
   return isUnder(stitched, root)
 }
 
+/** Второй диалог включения: контекст уже загружен — начать ли чистую беседу.
+ * Отказ, dismiss или невозможность спросить — «оставить» (fail-safe: из
+ * истории оно всё равно не вычищается, а беседу не трогаем без согласия). */
+async function offerClear($: EngineSubset): Promise<boolean> {
+  let label: string
+  try {
+    // $.ui.ask — прямой вызов; читать член $ как значение компилятор движка
+    // запрещает (тот же приём, что у confirmEnable).
+    label = await $.ui.ask(clearQuestion(), clearOptions())
+  } catch {
+    return false
+  }
+  return acceptedClear(label)
+}
+
+const CLEAR_DELAY_MS = 200
+
+/** /clear через часовой колбек: command.run из тела хука, за которым ждёт
+ * ход, движком отказан — ставим на выход из диспетча. Колбек живёт в среде
+ * плагина, state из него писать можно (тот же паттерн, что у showNotice).
+ * Тест-движок часов не имеет — false, текст /anon on попросит /clear руками. */
+function scheduleClear($: EngineSubset): boolean {
+  try {
+    const wait: Promise<void> = $.clock.after(CLEAR_DELAY_MS, () => {
+      $.command
+        .run({ command: 'clear' })
+        .catch(() => showNotice($, 'claude anon: run /clear yourself'))
+    })
+    wait.catch(() => undefined)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command
@@ -445,6 +493,14 @@ export const register: Register = on => {
     await update($, anonOn, () => decision.want)
 
     if (decision.want) {
+      // Переспрос закэшированного ответа: ближайший re-render (compaction,
+      // /clear) композит контекст уже через фильтр под anonOn=true.
+      try {
+        $.ui.invalidate('prompt.context')
+      } catch {
+        /* тест-движок invalidate не даёт */
+      }
+
       if (!launcher) {
         await saveTitleIfUnsaved($)
         try {
@@ -454,7 +510,17 @@ export const register: Register = on => {
         }
       }
       await showNotice($, 'claude anon on — session will not be saved')
-      return { text: 'claude anon on — the session will not be saved, memory writes are blocked.' }
+
+      // Контекст, загруженный до включения, из истории задним числом не
+      // вычистить — чистой беседу делает только /clear. Спрашиваем и ставим
+      // очистку сами; отказ — контекст остаётся, о чём текст честно говорит.
+      if (shouldOfferClear(launcher, await read($, contextTainted))) {
+        if (await offerClear($)) {
+          return { text: anonOnText(scheduleClear($) ? 'scheduled' : 'manual') }
+        }
+        return { text: anonOnText('kept') }
+      }
+      return { text: anonOnText('clean') }
     }
 
     if (!launcher) {
@@ -571,14 +637,20 @@ export const register: Register = on => {
   // Контекст первого хода: claudeMd/userEmail/attachedProject/gitStatus не
   // уходят, файлы за claudeMd сняты. Полоса честна: вырезка состоялась —
   // state ставится моментом вырезки (ход до включения не ставит).
+  // Без фильтра — метим tainted, если в блоках зашло личное: /anon on по этой
+  // метке предложит /clear (загруженное из истории беседы не вычищается).
   on('prompt.context', async ($, e, next) => {
-    if (!(await read($, anonOn))) {
-      return next(e)
-    }
-
+    const onNow = await read($, anonOn)
     const composed = await next(e)
     if (composed === undefined) {
       return next(e)
+    }
+
+    if (!onNow) {
+      if (hasPersonalBlocks(composed.blocks)) {
+        await update($, contextTainted, () => true)
+      }
+      return composed
     }
 
     await update($, contextUnloaded, () => true)
@@ -602,6 +674,12 @@ export const register: Register = on => {
   // анонимность на новый id, заголовок не трогаем.
   on('session.end', async ($, e, next) => {
     const stillAnon = await read($, anonOn)
+
+    if (e.reason === 'clear') {
+      // Беседа за /clear — новая: её контекст ещё не композован (первый ход
+      // пройдёт уже по актуальному anonOn), метка загрязнения снимается.
+      await update($, contextTainted, () => false)
+    }
 
     if (e.reason === 'clear' && stillAnon) {
       // /clear: старая беседа убита — файлы удаляются сейчас. Не полагаемся на

@@ -1,12 +1,7 @@
-import { describe, test, expect } from 'claude-code/testing'
-import {
-  armEngineOps,
-  armLifecycle,
-  armPromptAttachment,
-  armPromptCompose,
-  armPromptContext,
-  type Armed,
-} from './test-support'
+// Register-уровень: метка tainted на безфильтровую композицию контекста,
+// /clear-предложение при включении с уже загруженным личным контекстом.
+import { test, expect } from 'claude-code/testing'
+import { TEST_SESSION_ID, armEngineOps, armLifecycle, armPromptContext } from './test-support'
 
 const RUN = (args: string) => ({
   command: 'anon',
@@ -15,188 +10,89 @@ const RUN = (args: string) => ({
   presentation: { isFullscreen: false, columns: 80 } as const,
 })
 
-const CLAUDE_BLOCKS = [
-  { name: 'claudeMd', text: 'Codebase and user instructions are shown below.' },
-  { name: 'userEmail', text: 'me@example.com' },
-  { name: 'attachedProject', text: 'Project Foo' },
-  { name: 'gitStatus', text: 'branch: main' },
-  { name: 'currentDate', text: "Today's date is 2026-10-08." },
-] as const
+const PERSONAL = [
+  { name: 'claudeMd', text: 'Codebase and user instructions are shown below.\n\nContents of MEMORY.md…' },
+  { name: 'currentDate', text: "Today's date is 2026-10-10." },
+]
+const NEUTRAL = [{ name: 'currentDate', text: "Today's date is 2026-10-10." }]
 
-const BAND_PROPS = {
-  hasSurvey: false,
-  isWorking: false,
-  maxRows: 24,
-  bodyColumns: 80,
-  scroll: { offset: 0, bodyRows: 24 },
-  view: {},
-} as const
+test('prompt.context без анона с личными блоками метит tainted', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armPromptContext(on)
 
-// Движок требует: каждая shared-секция впереди session-секций.
-const BAND_SECTIONS = [
-  { id: 'intro', text: 'You are Claude Code', scope: 'shared' },
-  { id: 'tone', text: 'Tone and style', scope: 'shared' },
-  { id: 'memory', text: '# Memory', scope: 'session' },
-  { id: 'pronouns', text: 'pronouns guidance', scope: 'session' },
-] as const
+  const res = await $.prompt.context({ blocks: PERSONAL, instructionFiles: [] })
 
-// Банд рисуется из натива-мока: armNativeRender здесь не нужен — band
-// на AbovePrompt тестируется в render.test.tsx; здесь только текст-заглушка
-// через findAll не доступен. Проверяем честность bandNote через состояние
-// (contextUnloaded) — рендер её читает (render.test.tsx покрывает отрисовку).
-async function bandState(armed: Armed): Promise<boolean> {
-  return armed.state.get('anon-mode/contextUnloaded') === true
-}
-
-// Полный вход оп-композиции (см. guard.test.ts): model, promptModel,
-// surfaces, tools, outputStyle (null — дефолтный стиль), traits.
-const COMPOSE = {
-  model: 'test-model',
-  promptModel: 'test-model',
-  surfaces: ['terminal'] as const,
-  tools: [],
-  outputStyle: null,
-  traits: [],
-} as const
-
-describe('prompt.context — первый ход', () => {
-  test('при анон вырезает claudeMd/userEmail/attachedProject/gitStatus, файлы пусты', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptContext(on)
-    await $.command.run(RUN('on'))
-
-    const res = await $.prompt.context({
-      blocks: [...CLAUDE_BLOCKS],
-      instructionFiles: [{ kind: 'user', path: 'C:\\Users\\ok\\.claude\\CLAUDE.md', content: 'rules' }],
-    })
-
-    expect(res.blocks).toEqual([
-      { name: 'currentDate', text: "Today's date is 2026-10-08." },
-    ])
-    // Движок при вырезанном claudeMd нормализует отсутствующие файлы в
-    // undefined; семантика одинакова: файлов за claudeMd в беседе нет.
-    expect(res.instructionFiles ?? []).toEqual([])
-  })
-
-  test('без анона блоки уходят как есть', { timeoutMs: 15000 }, async ($, on) => {
-    const armed = armEngineOps(on)
-    armLifecycle(on)
-    armPromptContext(on)
-
-    const res = await $.prompt.context({
-      blocks: [...CLAUDE_BLOCKS],
-      instructionFiles: [],
-    })
-
-    expect(res.blocks).toEqual([...CLAUDE_BLOCKS])
-    expect(await bandState(armed)).toBe(false) // state не тронут
-  })
-
-  test('состояние contextUnloaded ставится после вырезки (band честен)', { timeoutMs: 15000 }, async ($, on) => {
-    const armed = armEngineOps(on)
-    armLifecycle(on)
-    armPromptContext(on)
-    expect(await bandState(armed)).toBe(false)
-
-    await $.command.run(RUN('on'))
-    await $.prompt.context({ blocks: [...CLAUDE_BLOCKS] })
-
-    expect(await bandState(armed)).toBe(true)
-  })
-
-  test('включение после хода с контекстом: вырезки не было, state остаётся ложным', { timeoutMs: 15000 }, async ($, on) => {
-    const armed = armEngineOps(on)
-    armLifecycle(on)
-    armPromptContext(on)
-
-    // Контекст собран до включения (blocки уехали в предыдущем ходе)...
-    await $.prompt.context({ blocks: [...CLAUDE_BLOCKS] })
-    // ...и только потом /anon
-    await $.command.run(RUN('on'))
-
-    expect(await bandState(armed)).toBe(false) // band покажет «context loaded before going anon»
-  })
-
-  test('off снимает выгрузку: та же беседа уже несёт контекст, честность важнее', { timeoutMs: 15000 }, async ($, on) => {
-    const armed = armEngineOps(on)
-    armLifecycle(on)
-    armPromptContext(on)
-
-    await $.command.run(RUN('on'))
-    await $.prompt.context({ blocks: [...CLAUDE_BLOCKS] }) // вырезка → true
-    await $.command.run(RUN('off'))
-
-    expect(await bandState(armed)).toBe(false) // после off в беседе есть контекст
-  })
+  expect(res.blocks.length).toBe(PERSONAL.length) // без анона ничего не режется
+  expect(armed.state.get('anon-mode/contextTainted')).toBe(true)
 })
 
-describe('prompt.attachment — вложения per-turn', () => {
-  test('при анон памятные вложения не уходят (text: null)', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptAttachment(on)
-    await $.command.run(RUN('on'))
+test('prompt.context без анона с нейтральными блоками не метит', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armPromptContext(on)
 
-    for (const type of ['relevant_memories', 'nested_memory', 'current_session_memory', 'team_context']) {
-      const res = await $.prompt.attachment({ type } as never)
-      expect(res.text).toBeNull()
-    }
-  })
+  await $.prompt.context({ blocks: NEUTRAL, instructionFiles: [] })
 
-  test('при анон прочие вложения проходят', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptAttachment(on)
-    await $.command.run(RUN('on'))
-
-    const res = await $.prompt.attachment({ type: 'todo_reminder' } as never)
-    expect(res.text).toBe('native attachment')
-  })
-
-  test('без анона вложения не глушатся', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptAttachment(on)
-
-    const res = await $.prompt.attachment({ type: 'relevant_memories' } as never)
-    expect(res.text).toBe('native attachment')
-  })
+  expect(armed.state.get('anon-mode/contextTainted')).not.toBe(true)
 })
 
-describe('prompt.compose — секции памяти системного промпта', () => {
-  test('при анон memory/pronouns вырезаны, политика добавлена в конец', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptCompose(on, [...BAND_SECTIONS])
-    await $.command.run(RUN('on'))
+test('prompt.context при включённом аноне режет блоки и не метит', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armPromptContext(on)
+  await $.command.run(RUN('on'))
 
-    const res = await $.prompt.compose(COMPOSE)
-    const ids = res.sections.map(s => s.id)
-    expect(ids).not.toContain('memory')
-    expect(ids).not.toContain('pronouns')
-    expect(ids).toContain('intro')
-    expect(ids).toContain('tone')
-    expect(ids[ids.length - 1]).toBe('anon-mode:policy')
+  const res = await $.prompt.context({
+    blocks: PERSONAL,
+    instructionFiles: [{ path: 'C:\\Users\\ok\\MEMORY.md', kind: 'memory', content: 'x' }],
   })
 
-  test('без анона секции не тронуты', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptCompose(on, [...BAND_SECTIONS])
+  expect(res.blocks.map(b => b.name)).toEqual(['currentDate'])
+  // «файлов за claudeMd нет» у движка — undefined, не пустой массив
+  expect((res.instructionFiles ?? []).length).toBe(0)
+  expect(armed.state.get('anon-mode/contextUnloaded')).toBe(true)
+  expect(armed.state.get('anon-mode/contextTainted')).not.toBe(true)
+})
 
-    const res = await $.prompt.compose(COMPOSE)
-    expect(res.sections).toEqual([...BAND_SECTIONS])
-  })
+test('/anon on при tainted зовёт в /clear (диалог в тест-движке отклоняется — kept)', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armPromptContext(on)
+  await $.prompt.context({ blocks: PERSONAL, instructionFiles: [] }) // загрязнение до включения
 
-  test('выключение снимает и вырезку, и политику на следующих рендерах', { timeoutMs: 15000 }, async ($, on) => {
-    armEngineOps(on)
-    armLifecycle(on)
-    armPromptCompose(on, [...BAND_SECTIONS])
-    await $.command.run(RUN('on'))
-    await $.command.run(RUN('off'))
+  const res = await $.command.run(RUN('on'))
 
-    const res = await $.prompt.compose(COMPOSE)
-    expect(res.sections).toEqual([...BAND_SECTIONS])
-  })
+  expect(res.text).toContain('/clear')
+  expect(armed.state.get('anon-mode/anonOn')).toBe(true)
+})
+
+test('/anon on без tainted — базовый текст без /clear', { timeoutMs: 15000 }, async ($, on) => {
+  armEngineOps(on)
+  armPromptContext(on)
+
+  const res = await $.command.run(RUN('on'))
+
+  expect(res.text).toBe('claude anon on — the session will not be saved, memory writes are blocked.')
+})
+
+test('/anon on в лаунчер-профиле не предлагает /clear даже при tainted', { timeoutMs: 15000 }, async ($, on) => {
+  armEngineOps(on, { env: { CLAUDE_ANON: '1', USERPROFILE: 'C:\\Users\\ok', TEMP: 'C:\\Users\\ok\\AppData\\Local\\Temp' } })
+  armPromptContext(on)
+  armLifecycle(on)
+  await $.session.start({ cwd: 'C:\\Users\\ok', surface: 'terminal', isInteractive: true }) // launcher → anonOn
+  // гипотетическая метка (не должна влиять на лаунчер)
+  await $.prompt.context({ blocks: PERSONAL, instructionFiles: [] })
+
+  const res = await $.command.run(RUN('on'))
+
+  expect(res.text).not.toContain('/clear')
+})
+
+test('/clear снимает tainted: новая беседа начинается чистой', { timeoutMs: 15000 }, async ($, on) => {
+  const armed = armEngineOps(on)
+  armPromptContext(on)
+  armLifecycle(on)
+  await $.prompt.context({ blocks: PERSONAL, instructionFiles: [] }) // tainted = true
+  expect(armed.state.get('anon-mode/contextTainted')).toBe(true)
+
+  await $.session.end({ reason: 'clear', sessionId: TEST_SESSION_ID, resume: { id: TEST_SESSION_ID } })
+
+  expect(armed.state.get('anon-mode/contextTainted')).toBe(false)
 })

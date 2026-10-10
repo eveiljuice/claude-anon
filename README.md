@@ -46,16 +46,24 @@
 
 ## Установка
 
-Плагин грузится из этого каталога (локальный marketplace-путь), поэтому
-обновления мода подхватываются без переустановки:
+Из GitHub — репозиторий сам является marketplace (обновления потом
+подтягиваются через `claude plugin marketplace update claude-anon`):
+
+```bash
+claude plugin marketplace add eveiljuice/claude-anon
+claude plugin install anon-mode@claude-anon
+```
+
+Те же два шага доступны изнутри запущенной сессии: `/plugin marketplace add eveiljuice/claude-anon`,
+затем `/plugin install anon-mode@claude-anon`.
+
+Из локальной копии (для разработки — правки мода подхватываются без
+переустановки):
 
 ```bash
 claude plugin marketplace add <путь к этому каталогу>
 claude plugin install anon-mode@claude-anon
 ```
-
-Для GitHub-репликации: `claude plugin install anon-mode@claude-anon --marketplace eveiljuice/claude-anon`
-(когда репозиторий опубликован).
 
 ### Shift+Tab (опционально)
 

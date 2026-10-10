@@ -2,14 +2,21 @@ import { describe, test, expect } from 'claude-code/testing'
 
 import {
   ANON_POLICY_ID,
+  CLEAR_ACCEPT,
   MEMORY_ATTACHMENT_TYPES,
   acceptedAnswer,
+  acceptedClear,
+  anonOnText,
   appendPolicy,
   bandNote,
+  clearOptions,
+  clearQuestion,
   confirmOptions,
   confirmQuestion,
   decideAnon,
   dropContextBlocks,
+  hasPersonalBlocks,
+  shouldOfferClear,
   stripMemorySections,
 } from './logic'
 
@@ -170,5 +177,86 @@ describe('appendPolicy', () => {
   test('идемпотентна: вторая попытка не дублирует', () => {
     const once = appendPolicy([], 'правила')
     expect(appendPolicy(once, 'правила').length).toBe(1)
+  })
+})
+
+describe('hasPersonalBlocks — детектор личного контекста в первом ходе', () => {
+  test('claudeMd / userEmail / attachedProject / gitStatus — личное', () => {
+    expect(
+      hasPersonalBlocks([
+        { name: 'claudeMd', text: 'Codebase and user instructions are shown below.' },
+        { name: 'currentDate', text: "Today's date is 2026-10-10." },
+      ]),
+    ).toBe(true)
+    expect(hasPersonalBlocks([{ name: 'userEmail', text: 'me@example.com' }])).toBe(true)
+    expect(hasPersonalBlocks([{ name: 'attachedProject', text: 'p' }])).toBe(true)
+    expect(hasPersonalBlocks([{ name: 'gitStatus', text: 'g' }])).toBe(true)
+  })
+
+  test('нейтральные блоки и пустой список — не личное', () => {
+    expect(
+      hasPersonalBlocks([
+        { name: 'currentDate', text: 'd' },
+        { name: 'myplugin:thing', text: 'x' },
+      ]),
+    ).toBe(false)
+    expect(hasPersonalBlocks([])).toBe(false)
+  })
+})
+
+describe('shouldOfferClear — когда спрашивать про /clear', () => {
+  test('не-лаунчер с загрязнённым контекстом — спрашиваем', () => {
+    expect(shouldOfferClear(false, true)).toBe(true)
+  })
+
+  test('лаунчер не спрашивает никогда; чистый контекст — тоже', () => {
+    expect(shouldOfferClear(true, true)).toBe(false)
+    expect(shouldOfferClear(true, false)).toBe(false)
+    expect(shouldOfferClear(false, false)).toBe(false)
+  })
+})
+
+describe('clear-диалог', () => {
+  test('вопрос честно называет память и /clear', () => {
+    const q = clearQuestion()
+    expect(q).toContain('memory')
+    expect(q).toContain('/clear')
+    expect(q).toContain('cannot be unloaded')
+  })
+
+  test('варианты: отказ первым (default), очистка второй', () => {
+    const options = clearOptions()
+    expect(options[0]).toBe('Keep (default)')
+    expect(options[1]).toBe(CLEAR_ACCEPT)
+    expect(options.length).toBe(2)
+  })
+
+  test('согласие — только точная метка; dismiss — отказ', () => {
+    expect(acceptedClear(CLEAR_ACCEPT)).toBe(true)
+    expect(acceptedClear('clear conversation')).toBe(false)
+    expect(acceptedClear('Keep (default)')).toBe(false)
+    expect(acceptedClear(undefined)).toBe(false)
+  })
+})
+
+describe('anonOnText — текст результата /anon on', () => {
+  test('чистое включение — базовый текст без упоминания /clear', () => {
+    const t = anonOnText('clean')
+    expect(t).toBe('claude anon on — the session will not be saved, memory writes are blocked.')
+  })
+
+  test('контекст остался (' + 'kept' + ') — честно зовёт в /clear', () => {
+    const t = anonOnText('kept')
+    expect(t).toContain('will not be saved')
+    expect(t).toContain('/clear')
+  })
+
+  test('очистка поставлена (scheduled) — сообщает о ней', () => {
+    expect(anonOnText('scheduled')).toContain('clearing')
+  })
+
+  test('часов нет (manual) — просит запустить /clear руками', () => {
+    const t = anonOnText('manual')
+    expect(t).toContain('run /clear yourself')
   })
 })

@@ -67,6 +67,11 @@ export function dropContextBlocks(
   return blocks.filter(b => !(CONTEXT_DROP_BLOCKS as readonly string[]).includes(b.name))
 }
 
+/** В блоках первого хода есть личное — те же имена, что роняет dropContextBlocks. */
+export function hasPersonalBlocks(blocks: readonly PromptContextBlock[]): boolean {
+  return blocks.some(b => (CONTEXT_DROP_BLOCKS as readonly string[]).includes(b.name))
+}
+
 export function stripMemorySections(
   sections: readonly PromptComposeSection[],
 ): PromptComposeSection[] {
@@ -99,6 +104,56 @@ export function confirmQuestion(): string {
 /** Согласие — только точная метка; dismiss (undefined) и всё прочее — отказ. */
 export function acceptedAnswer(label: string | undefined): boolean {
   return label === CONFIRM_ACCEPT
+}
+
+// --- /clear-диалог: контекст загружен до включения, из истории не вычистить ---
+
+export const CLEAR_KEEP = 'Keep (default)'
+export const CLEAR_ACCEPT = 'Clear conversation'
+
+export function clearOptions(): readonly string[] {
+  return [CLEAR_KEEP, CLEAR_ACCEPT]
+}
+
+export function clearQuestion(): string {
+  return (
+    'claude anon: context is already loaded in this conversation\n\n' +
+    'Your memory and instruction files were loaded before the mode went on, and what ' +
+    'a conversation carries cannot be unloaded — only a new conversation is clean.\n' +
+    'Clear the conversation now? (same as /clear: anon stays on, the old transcript ' +
+    'is deleted at exit)'
+  )
+}
+
+/** Согласие — только точная метка; dismiss и всё прочее — «оставить». */
+export function acceptedClear(label: string | undefined): boolean {
+  return label === CLEAR_ACCEPT
+}
+
+/** Спрашивать про /clear стоит, только когда личный контекст реально зашёл в
+ * беседу и это не лаунчер-профиль (там фильтр с session.start — захода не было). */
+export function shouldOfferClear(launcher: boolean, tainted: boolean): boolean {
+  return !launcher && tainted
+}
+
+/** Исходы включения по контексту: чисто / оставили как есть / очистка
+ * поставлена таймером / очистку просим запустить руками (часов нет). */
+export type AnonOnOutcome = 'clean' | 'kept' | 'scheduled' | 'manual'
+
+export function anonOnText(outcome: AnonOnOutcome): string {
+  const base = 'claude anon on — the session will not be saved, memory writes are blocked.'
+  switch (outcome) {
+    case 'clean':
+      return base
+    case 'kept':
+      return (
+        base + ' Context loaded before going anon stays with the model — /clear starts clean.'
+      )
+    case 'scheduled':
+      return base + ' Context was loaded before — clearing the conversation now…'
+    case 'manual':
+      return base + ' Context was loaded before — run /clear yourself to start clean.'
+  }
 }
 
 export function appendPolicy(
