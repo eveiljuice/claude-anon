@@ -39,16 +39,9 @@ going back, and `No (default)` / `Yes, I accept`. Consent is remembered
 between sessions so the dialog doesn't repeat; Esc declines and nothing is
 enabled.
 
-## What you see
-
-- a purple band above the prompt box with a mascot;
-- a purple `· claude anon` label in the footer next to the native modes;
-- terminal window/tab title `Claude Code Anon` while the mode is active.
-
 ## Installation
 
-From GitHub — the repository itself is the marketplace (updates are pulled
-later with `claude plugin marketplace update claude-anon`):
+From GitHub — the repository itself is the marketplace:
 
 ```bash
 claude plugin marketplace add eveiljuice/claude-anon
